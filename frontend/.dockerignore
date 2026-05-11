@@ -15,7 +15,10 @@ __pycache__/
 .idea/
 
 # Env / secrets
-.env
+# NOTE: frontend/.env contains VITE_BACKEND_URL which Vite bakes into the bundle
+# at build time. Excluding it here made the bundle ship with "undefined/api/v1"
+# as baseURL, causing all API calls to fall through to nginx SPA fallback.
+# .env  ← intentionally NOT excluded for frontend build
 .kamal.env
 
 # Build output
