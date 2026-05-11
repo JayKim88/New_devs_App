@@ -1,6 +1,6 @@
 import asyncio
+from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import QueuePool
 import logging
 from ..config import settings
 
@@ -14,17 +14,21 @@ class DatabasePool:
     async def initialize(self):
         """Initialize database connection pool"""
         try:
-            # Create async engine with connection pooling
-            database_url = f"postgresql+asyncpg://{settings.supabase_db_user}:{settings.supabase_db_password}@{settings.supabase_db_host}:{settings.supabase_db_port}/{settings.supabase_db_name}"
+            # Build async URL from the single configured database_url.
+            # Settings only defines `database_url` (e.g. postgresql://…); convert it
+            # to the asyncpg driver form expected by create_async_engine.
+            database_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
             
+            # NOTE: Removed `poolclass=QueuePool` — sync QueuePool is incompatible
+            # with create_async_engine (SQLAlchemy 2.0). The async engine selects
+            # AsyncAdaptedQueuePool by default, which supports the same options below.
             self.engine = create_async_engine(
                 database_url,
-                poolclass=QueuePool,
-                pool_size=20,  # Number of connections to maintain
-                max_overflow=30,  # Additional connections when needed
-                pool_pre_ping=True,  # Validate connections
-                pool_recycle=3600,  # Recycle connections every hour
-                echo=False  # Set to True for SQL debugging
+                pool_size=20,
+                max_overflow=30,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+                echo=False
             )
             
             self.session_factory = async_sessionmaker(
@@ -45,8 +49,14 @@ class DatabasePool:
         if self.engine:
             await self.engine.dispose()
     
-    async def get_session(self) -> AsyncSession:
-        """Get database session from pool"""
+    def get_session(self) -> AsyncSession:
+        """Get database session from pool.
+
+        Not async: `session_factory()` is a sync call that returns an
+        AsyncSession (which is itself an async context manager). Marking this
+        `async def` forced callers into `async with await ...`, but they all
+        use `async with db_pool.get_session() as session:` — so keep this sync.
+        """
         if not self.session_factory:
             raise Exception("Database pool not initialized")
         return self.session_factory()
@@ -54,7 +64,7 @@ class DatabasePool:
 # Global database pool instance
 db_pool = DatabasePool()
 
-async def get_db_session() -> AsyncSession:
+async def get_db_session() -> AsyncIterator[AsyncSession]:
     """Dependency to get database session"""
     async with db_pool.get_session() as session:
         yield session
